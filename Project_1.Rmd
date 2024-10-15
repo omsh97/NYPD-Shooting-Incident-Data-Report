@@ -1,0 +1,216 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Omkar S"
+date: "10/14/2024"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Official Dataset Information:
+
+List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. This data can be used by the public to explore the nature of shooting/criminal activity. Please refer to [NYPD Shooting Incident Data (Historic) - CKAN](https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic) for additional information about this dataset. 
+
+## Step 0: Import Required Libraries
+
+```{r library, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Step 1: Download Data
+
+```{r load}
+url1 = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+df1 = read_csv(url1)
+head(df1)
+```
+
+## Step 2: Tidy and Transform Data
+
+The following columns seem unnecessary for the required data analysis and shall be removed: **PRECINCT**, **JURISDICTION_CODE**, **LOCATION_DESC**, **X_COORD_CD**, **Y_COORD_CD**, and **Lon_Lat**
+
+```{r}
+df1 = df1 %>% select(INCIDENT_KEY, 
+                   OCCUR_DATE,
+                   OCCUR_TIME,
+                   BORO, 
+                   STATISTICAL_MURDER_FLAG,
+                   PERP_AGE_GROUP,
+                   PERP_SEX,
+                   PERP_RACE,
+                   VIC_AGE_GROUP,
+                   VIC_SEX,
+                   VIC_RACE,
+                   Latitude,
+                   Longitude)
+
+# Return the column name along with the missing values
+lapply(df1, function(x) sum(is.na(x)))
+```
+
+* The above data output shows a huge number of 'na' Values. The total number of rows in the dataset is 28562. 
+* Given that these 3 variables: **PERP_AGE_GROUP**, **PERP_SEX**, **PERP_RACE** have more than 9300 'na' values, removing them would result in a lot of lost data. 
+* Perhaps these cases are probably still under investigation (Step 4 expands on this). 
+* Hence, this missing data shall be grouped together with **"UNKNOWN"**. 
+
+Data type conversions are also needed as follows:
+
+* **INCIDENT_KEY** should be treated as a string.
+* **BORO** should be treated as a factor.
+* **PERP_AGE_GROUP** should be treated as a factor.
+* **PERP_SEX** should be treated as a factor.
+* **PERP_RACE** should be treated as a factor.
+* **VIC_AGE_GROUP** should be treated as a factor.
+* **VIC_SEX** should be treated as a factor.
+* **VIC_RACE** should be treated as a factor.
+
+```{r}
+# Tidy and transform data
+df1 = df1 %>% replace_na(list(PERP_AGE_GROUP = "UNKNOWN", PERP_SEX = "UNKNOWN", PERP_RACE = "UNKNOWN"))
+#df1 = df1 %>% replace_null(list(PERP_AGE_GROUP = "UNKNOWN", PERP_SEX = "UNKNOWN", PERP_RACE = "UNKNOWN"))
+
+# Remove extreme values in data
+df1 = subset(df1, PERP_AGE_GROUP!="1020" & PERP_AGE_GROUP!="224" & PERP_AGE_GROUP!="940")
+
+df1$PERP_AGE_GROUP = recode(df1$PERP_AGE_GROUP, '(null)' = "UNKNOWN")
+df1$PERP_SEX = recode(df1$PERP_SEX, U = "UNKNOWN")
+df1$PERP_SEX = recode(df1$PERP_SEX, '(null)' = "UNKNOWN")
+df1$PERP_RACE = recode(df1$PERP_RACE, '(null)' = "UNKNOWN")
+df1$VIC_SEX   = recode(df1$VIC_SEX, U = "UNKNOWN")
+df1$INCIDENT_KEY = as.character(df1$INCIDENT_KEY)
+df1$BORO = as.factor(df1$BORO)
+df1$PERP_AGE_GROUP = as.factor(df1$PERP_AGE_GROUP)
+df1$PERP_SEX = as.factor(df1$PERP_SEX)
+df1$PERP_RACE = as.factor(df1$PERP_RACE)
+df1$VIC_AGE_GROUP = as.factor(df1$VIC_AGE_GROUP)
+df1$VIC_SEX = as.factor(df1$VIC_SEX)
+df1$VIC_RACE = as.factor(df1$VIC_RACE)
+
+# Return summary statistics
+summary(df1)
+```
+
+## Step 3: Data Visualization and Analysis
+
+**Data Visualization**
+
+1. Which borough in New York has the most and the least number of shooting incidents? How many of these shooting incidents are murder cases? 
+
+* Brooklyn has the highest number of shooting incidents, while Staten Island has the least. 
+* The number of these incidents resulting in murder also follows the same trend.
+
+```{r}
+g <- ggplot(df1, aes(x = BORO)) +
+  geom_bar() +
+  labs(title = "Number of Incidents in Each Borough",
+       x = "Name of Borough",
+       y = "Number of Incidents") +
+  theme_bw()
+g
+```
+
+```{r}
+table(df1$BORO, df1$STATISTICAL_MURDER_FLAG)
+```
+2. Can a trend be derived from the occurrence of shooting incidents according to day and time in New York?
+
+* The number of shooting incidents increase as the weekends approach and are at their lowest in the middle of the week. 
+* Majority of the shooting incidents seem to start occurring in the morning around 9 AM and reach the peak around midnight, after which they start to decrease and reach the lowest point around 6am.
+
+```{r}
+df1$OCCUR_DAY = mdy(df1$OCCUR_DATE)
+df1$OCCUR_DAY = wday(df1$OCCUR_DAY, label = TRUE)
+df1$OCCUR_HOUR = hour(hms(as.character(df1$OCCUR_TIME)))
+
+df2 = df1 %>%
+  group_by(OCCUR_DAY) %>%
+  count()
+
+df3 = df1 %>%
+  group_by(OCCUR_HOUR) %>%
+  count()
+```
+
+```{r}
+g <- ggplot(df2, aes(x = OCCUR_DAY, y = n)) +
+  geom_col() +
+  labs(title = "Incidents occuring on each day",
+       x = "Day of the week",
+       y = "Number of Incidents") +
+   theme_bw()
+g
+```
+```{r}
+g <- ggplot(df3, aes(x = OCCUR_HOUR, y = n)) +
+  geom_line() +
+  labs(title = "Time when incidents occur during the day",
+       x = "Hours (0-24)",
+       y = "Number of Incidents") +
+  theme_linedraw()
+g
+```
+
+**Data Analysis**
+
+Profiling Perpetrators and Victims on the basis of Age Group, Sex, and Race
+
+```{r}
+# Tabulating Perpetrator Age group and the Victim age group
+table(df1$PERP_AGE_GROUP, df1$VIC_AGE_GROUP)
+```
+
+```{r}
+# Tabulating Perpetrator Gender and the Victim Gender
+table(df1$PERP_SEX, df1$VIC_SEX)
+```
+
+```{r}
+# Tabulating Perpetrator Race and the Victim Race
+table(df1$PERP_RACE, df1$VIC_RACE)
+```
+While using 'UNKNOWN' aided results for visualizing trends related to area and time, it makes analysis of data on the basis of other variables difficult. 
+Hence, for data analysis for the three categories mentioned above, it is better to disregard the 'UNKNOWN' category.
+
+
+```{r}
+# Tabulating Perpetrator Age group and the Victim age group, No UKNOWNS
+table(df1$PERP_AGE_GROUP, df1$VIC_AGE_GROUP, exclude = 'UNKNOWN')
+```
+```{r}
+# Tabulating Perpetrator Gender and the Victim Gender, No UKNOWNS
+table(df1$PERP_SEX, df1$VIC_SEX, exclude = 'UNKNOWN')
+```
+```{r}
+# Tabulating Perpetrator Race and the Victim Race, No UKNOWNS
+table(df1$PERP_RACE, df1$VIC_RACE, exclude = 'UNKNOWN')
+```
+Results of the Analysis:
+
+* Majority of shooting incidents occur when the perpetrators as well as the victims are in the age group of '25-44' and '18-24'. 
+* 'Male' on 'Male' shooting Incidents are exponentially higher than all other categories, and 'Female' on 'Female' shooting Incidents are exceptionally low.
+* 'Black' and 'White Hispanic' Races have the highest shooting incident rate in New York City. (Bias Section Expands on this)
+
+**Model Building**
+
+The above analysis gave some shocking trends. Thus, for experimentation purposes, we shall train a model and see if any bias seeps into it. We shall be training a Logistic Regression Model.
+
+```{r}
+glm_model.fit <- glm(PERP_RACE ~ VIC_RACE+ PERP_SEX + VIC_SEX + PERP_AGE_GROUP + VIC_AGE_GROUP+ OCCUR_HOUR + OCCUR_DAY, data = df1, family = binomial, maxit = 100)
+summary(glm_model.fit)
+```
+* As shown above, fitting the model gives a **'Warning: glm.fit: fitted probabilities numerically 0 or 1 occurred'**. 
+* This basically means that the predicted probabilities of the model are indistinguishable from 0 and 1, which represents a heavy bias towards some of the categories, which in this case would be 'Black' and 'WHITE HISPANIC' due to the nature of the data. 
+* This presents an ethical dilemma which is expanded on below.
+
+## Step 4: Identify Bias
+The results of the analysis above are clear to see according to the data. The biggest issue that these results pose however, is pertains to the data collection. As was demonstrated, the 'UNKNOWN' fields were removed in order to make the data analysis sensible. Removing more than 10000 records out of 28559 means a removal of more than 33% of the data. This incomplete data collection paints certain age groups and the 'MALE' Gender as the primary cause and causality of shooting incidents. 
+
+But, the biggest issue here is pertaining Race. The data paints 'Black' and 'White Hispanic' individuals as the primary participants in shooting incidents, which could lead to a lot of racial bias when trying to act according any model trained on this data analysis. This could also spill over into the society and cause chaos. 
+
+Hence, it is imperative that any data added to such datasets be completely accurate and not have any missing fields as they could result in a skewed representation of the situation. This highlights the ethical dilemma presented by such data. While this data can be used to visualize and analyze time and location of shooting incidents, I sincerely believe using this data to label groups responsible for or involved in such incidents is an ethical and moral mistake.
